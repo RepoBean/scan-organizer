@@ -1,0 +1,3 @@
+ollama
+watchdog
+pdf2image
