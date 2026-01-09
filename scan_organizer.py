@@ -12,11 +12,20 @@ POPPLER_PATH = r"D:\poppler-25.12.0\Library\bin"         # Path to your poppler/
 MODEL = "qwen3-vl:8b"
 
 PROMPT = (
-    "Look at this image. "
-    "If it's a DOCUMENT (letter, form, bill, certificate), return: YYYY-MM-DD - [Sender] - [3 word summary]. "
-    "If it's a PHOTO (picture of people, places, events), return: [Year] - [Subject] - [Location or Event]. "
-    "Use 0000-00-00 for unknown document dates, or 0000 for unknown photo years. "
-    "Return ONLY the filename, nothing else."
+    "Analyze this image and return ONLY a filename. NO explanation. NO reasoning. NO extra text.\n"
+    "\n"
+    "FORMAT:\n"
+    "Documents: YYYY-MM-DD - Sender - Three Word Summary\n"
+    "Photos: Year - Subject - Location\n"
+    "\n"
+    "EXAMPLES:\n"
+    "Electric bill from Florida Power dated Dec 23, 2025 → 2025-12-23 - FloridaPower - Electric Bill\n"
+    "Marriage certificate from county clerk dated Jan 15, 2024 → 2024-01-15 - County Clerk - Marriage Certificate\n"
+    "Medical form from hospital with no date → 0000-00-00 - Hospital Name - Medical Form\n"
+    "Family photo at beach from 2010 → 2010 - Family Beach - Summer Vacation\n"
+    "Old photo with unknown year → 0000 - Person Name - Location Description\n"
+    "\n"
+    "Return ONLY the filename:"
 )
 
 class DocRenamer(FileSystemEventHandler):
