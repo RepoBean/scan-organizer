@@ -1,6 +1,7 @@
 import os
 import time
 import tempfile
+import threading
 import ollama
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -9,7 +10,7 @@ from pdf2image import convert_from_path
 # --- CONFIGURATION ---
 WATCH_FOLDER = r"Z:\Scans" # Update this path
 POPPLER_PATH = r"D:\poppler-25.12.0\Library\bin"         # Path to your poppler/bin folder
-MODEL = "qwen3-vl:8b"
+MODEL = "qwen3-vl:32b"
 
 PROMPT = (
     "Analyze this image and return ONLY a filename. NO explanation. NO reasoning. NO extra text.\n"
@@ -59,10 +60,9 @@ class DocRenamer(FileSystemEventHandler):
 
             # Wait for the network/scanner to finish writing the file
             if not self.wait_for_file_stability(file_path):
-                print(f"⚠️ Timeout: File {file_path} is still changing or locked.")
+                print(f"[WARN] Timeout: File {file_path} is still changing or locked.")
                 return
 
-            print(f"📄 Processing: {os.path.basename(file_path)}...", end=" ", flush=True)
             process_start = time.time()
 
             # 1. Prepare image for the AI
@@ -76,16 +76,30 @@ class DocRenamer(FileSystemEventHandler):
                 pages[0].save(temp_img, 'JPEG')
                 img_to_send = temp_img
 
-            # 2. Query Qwen3-VL-8B via Ollama
-            response = ollama.chat(
-                model=MODEL,
-                messages=[{
-                    'role': 'user',
-                    'content': PROMPT,
-                    'images': [img_to_send]
-                }],
-                options={'temperature': 0}
-            )
+            # 2. Query vision model via Ollama (with live timer)
+            stop_timer = threading.Event()
+            def _timer():
+                start = time.time()
+                while not stop_timer.is_set():
+                    elapsed = int(time.time() - start)
+                    print(f"\r[...] Processing: {os.path.basename(file_path)}... {elapsed}s", end="", flush=True)
+                    stop_timer.wait(1)
+
+            timer_thread = threading.Thread(target=_timer, daemon=True)
+            timer_thread.start()
+            try:
+                response = ollama.chat(
+                    model=MODEL,
+                    messages=[{
+                        'role': 'user',
+                        'content': PROMPT,
+                        'images': [img_to_send]
+                    }],
+                    options={'temperature': 0}
+                )
+            finally:
+                stop_timer.set()
+                timer_thread.join()
             raw_name = response['message']['content'].strip()
 
             # Clean illegal characters - Windows doesn't allow: \ / : * ? " < > |
@@ -97,8 +111,7 @@ class DocRenamer(FileSystemEventHandler):
 
             # Validate we got a usable filename
             if not clean_name or len(clean_name) < 5:
-                print(f"(failed)")
-                print(f"   ⚠️ AI returned unusable name: '{raw_name}' - skipping")
+                print(f"\r[WARN] AI returned unusable name: '{raw_name}' - skipping          ")
                 return
 
             # 3. Rename original file
@@ -107,15 +120,14 @@ class DocRenamer(FileSystemEventHandler):
             
             os.rename(file_path, new_path)
             elapsed = time.time() - process_start
-            print(f"({elapsed:.1f}s)")
-            print(f"   ✅ Renamed to: {clean_name}{ext}")
+            print(f"\r[OK] Renamed to: {clean_name}{ext} ({elapsed:.1f}s)          ")
 
             # Cleanup temp image
             if temp_img and os.path.exists(temp_img):
                 os.remove(temp_img)
 
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"[ERR] Error: {e}")
 
 if __name__ == "__main__":
     if not os.path.exists(WATCH_FOLDER): os.makedirs(WATCH_FOLDER)
@@ -128,7 +140,7 @@ if __name__ == "__main__":
                       and not (len(f) > 10 and f[:4].isdigit() and f[4] == '-')]
 
     if existing_files:
-        print(f"\n📂 Found {len(existing_files)} unprocessed file(s):")
+        print(f"\nFound {len(existing_files)} unprocessed file(s):")
         for i, f in enumerate(existing_files, 1):
             print(f"  {i}. {f}")
 
@@ -149,10 +161,17 @@ if __name__ == "__main__":
     observer = Observer()
     observer.schedule(handler, WATCH_FOLDER, recursive=False)
 
-    print(f"\n🚀 AI Watcher running on {WATCH_FOLDER}. Drop a file in to test!")
+    print(f"\nAI Watcher running on {WATCH_FOLDER}. Drop a file in to test!")
     observer.start()
     try:
         while True: time.sleep(1)
     except KeyboardInterrupt:
+        print("\nStopping watcher...")
         observer.stop()
+        print("Unloading model from VRAM...")
+        try:
+            ollama.generate(model=MODEL, keep_alive=0)
+            print("Model unloaded.")
+        except Exception as e:
+            print(f"Could not unload model: {e}")
     observer.join()
