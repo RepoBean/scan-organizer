@@ -114,13 +114,20 @@ class DocRenamer(FileSystemEventHandler):
                 print(f"\r[WARN] AI returned unusable name: '{raw_name}' - skipping          ")
                 return
 
-            # 3. Rename original file
+            # 3. Rename original file (deduplicate if name already exists)
             ext = os.path.splitext(file_path)[1]
-            new_path = os.path.join(os.path.dirname(file_path), f"{clean_name}{ext}")
-            
+            folder = os.path.dirname(file_path)
+            final_name = clean_name
+            new_path = os.path.join(folder, f"{final_name}{ext}")
+            counter = 2
+            while os.path.exists(new_path):
+                final_name = f"{clean_name} ({counter})"
+                new_path = os.path.join(folder, f"{final_name}{ext}")
+                counter += 1
+
             os.rename(file_path, new_path)
             elapsed = time.time() - process_start
-            print(f"\r[OK] Renamed to: {clean_name}{ext} ({elapsed:.1f}s)          ")
+            print(f"\r[OK] Renamed to: {final_name}{ext} ({elapsed:.1f}s)          ")
 
             # Cleanup temp image
             if temp_img and os.path.exists(temp_img):
